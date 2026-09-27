@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - name: pebble, the test CA
+        run: |
+          go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
+          go install github.com/letsencrypt/pebble/v2/cmd/pebble-challtestsrv@v2.10.1
+      - run: go test ./...
+      - name: the provider catalog matches lego
+        run: |
+          go generate ./...
+          git diff --exit-code internal/cert/providers.json
+      - name: every target builds
+        run: |
+          for target in linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            CGO_ENABLED=0 GOOS=${target%/*} GOARCH=${target#*/} go build -o /dev/null .
+          done

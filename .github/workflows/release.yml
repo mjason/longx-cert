@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: pebble, the test CA
+        run: |
+          go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
+          go install github.com/letsencrypt/pebble/v2/cmd/pebble-challtestsrv@v2.10.1
+      - run: go test ./...
+      - name: Build every target
+        run: |
+          set -eu
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            os=${target%/*}; arch=${target#*/}
+            name=longx-cert-$os-$arch
+            dir=build/$name
+            exe=longx-cert; [ "$os" = windows ] && exe=longx-cert.exe
+            mkdir -p "$dir"
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
+              -ldflags "-s -w -X github.com/mjason/longx-cert/internal/cert.Version=$GITHUB_REF_NAME" \
+              -o "$dir/$exe" .
+            cp LICENSE "$dir/"
+            if [ "$os" = windows ]; then
+              (cd "$dir" && zip -q "../../dist/$name.zip" "$exe" LICENSE)
+            else
+              tar -C "$dir" -czf "dist/$name.tar.gz" "$exe" LICENSE
+            fi
+          done
+          (cd dist && sha256sum * > SHA256SUMS)
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          lego=$(go list -m -f '{{.Version}}' github.com/go-acme/lego/v5)
+          gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" \
+            --notes "longx-cert $GITHUB_REF_NAME, lego $lego."
